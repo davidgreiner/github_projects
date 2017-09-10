@@ -1,28 +1,28 @@
-<?php
+	<?php
 
-/**
- * @file
- * Contains the GithubProjectsRemoteSelectQuery class.
- */
+	/**
+	 * @file
+	 * Contains the GithubProjectsRemoteSelectQuery class.
+	 */
 
-/**
- * Select query for our remote data.
- *
- * @todo Make vars protected once no longer developing.
- */
-class GithubRemoteSelectQuery extends RemoteEntityQuery {
+	/**
+	 * Select query for our remote data.
+	 *
+	 * @todo Make vars protected once no longer developing.
+	 */
+	class GithubRemoteSelectQuery extends RemoteEntityQuery {
 
-  /**
-   * Determines whether the query is RetrieveMultiple or Retrieve.
-   *
-   * The query is Multiple by default, until an ID condition causes it to be
-   * single.
-   *
-   * @var bool
-   */
-  public $retrieve_multiple = TRUE;
+	  /**
+	   * Determines whether the query is RetrieveMultiple or Retrieve.
+	   *
+	   * The query is Multiple by default, until an ID condition causes it to be
+	   * single.
+	   *
+	   * @var bool
+	   */
+	  public $retrieve_multiple = TRUE;
 
-  /**
+	  /**
    * An array of conditions on the query, grouped by the table they are on.
    *
    * @var array
@@ -100,7 +100,8 @@ class GithubRemoteSelectQuery extends RemoteEntityQuery {
       $this->throwException(
         'GITHUBPROJECTSREMOTESELECTQUERY_INVALID_ENTITY_CONDITION',
         'The query object can only accept the \'entity_id\' condition.'
-      );
+);
+      //dpm('The query object can only accept the \'entity_id\'');
     }
   }
 
@@ -159,6 +160,8 @@ class GithubRemoteSelectQuery extends RemoteEntityQuery {
    *   Remote entity objects as retrieved from the remote connection.
    */
   public function execute() {
+
+	  $repositories = [];
 	  $entities = [];
 
 	  // If there are any validation errors, don't perform a search.
@@ -168,17 +171,21 @@ class GithubRemoteSelectQuery extends RemoteEntityQuery {
 
 	  $path = "users/" . variable_get("github.login", "") . "/starred";
 
-	  // Make the request.
-	  try {
-		  $response = $this->connection->makeRequest($path, 'GET', array('Accept' => 'application/vnd.github.mercy-preview+json')); //TODO: Cache!!!
 
-		  //dpm($response);
+	  //$k = 0;
+	  while($path){
+		  // Make the request.
+		  try {
+			  $response = $this->connection->makeRequest($path, 'GET', array('Accept' => 'application/vnd.github.mercy-preview+json'));
+
 
 		  switch ($this->base_entity_type) {
 		  case 'github_remote_repository':
 			  watchdog('github', 'Entity Type is github_remote_repository', array(), WATCHDOG_DEBUG);
 
-			  // Fetch the list of events.V
+
+			  // Fetch the list of events.
+
 			  if ($response->code == 404) {
 				  // No data was returned so let's provide an empty list.
 				  watchdog('github', 'Response Code 404', array(), WATCHDOG_DEBUG);
@@ -188,41 +195,60 @@ class GithubRemoteSelectQuery extends RemoteEntityQuery {
 				  // Convert the JSON (assuming that's what we're getting) into a PHP array.
 				  // Do any unmarshalling to convert the response data into a PHP array.
 				  watchdog('github', 'Response data received', array(), WATCHDOG_DEBUG);
-				  $repositories = array_values(json_decode($response->data, TRUE));
+				  $ttt =array_values(json_decode($response->data, TRUE));
 			  }
 
-			  if (isset($this->conditions[$this->remote_base])) {
-				  foreach ($this->conditions[$this->remote_base] as $condition) {
-					  switch ($condition['field']) {
-					  case 'repository_id':
-						  $repository_id = $condition['value'];
-						  $repositories = array_filter($repositories, function ($objects) use ($repository_id) {
-							  return ($objects['id'] == $repository_id);
-						  });
-						  break;
-
-					  case 'repository_fullname':
-						  $repository_fullname = $condition['value'];
-						  $repositories = array_filter($repositories, function ($objects) use ($repository_fullname) {
-							  return ($objects['full_name'] == $repository_fullname);
-						  });
-						  break;
-					  }
-				  }
+			  for ($i= 0; $i<count($ttt); $i++) {
+				  $repositories[] = $ttt[$i];
 			  }
-
-
-			  $entities = $this->parseEventResponse($repositories);
-
 			  break;
+		  }
 
+
+		  $headers = $response->headers;
+		  if (isset($headers['link'])) {
+			  $path=github_parseLink($headers['link']);
+		  }
+		  else
+			  $path=NULL;
+		  }
+		  catch (Exception $e) {
+			  drupal_set_message($e->getMessage());
+			  $path=NULL;
+		  }
+
+	  }
+	  //dpm($response);
+
+
+	  //		print_r("\nbefore:".count($repositories));
+
+	  if (isset($this->conditions[$this->remote_base])) {
+		  foreach ($this->conditions[$this->remote_base] as $condition) {
+			  switch ($condition['field']) {
+			  case 'id':
+				  $repository_id = $condition['value'];
+				  $repositories = array_filter($repositories, function ($objects) use ($repository_id) {
+					  return ($objects["id"] == $repository_id);
+				  });
+				  break;
+
+			  case 'fullname':
+			  case 'full_name':
+				  $repository_full_name = $condition['value'];
+				  $repositories = array_filter($repositories, function ($objects) use ($repository_full_name) {
+					  return ($objects["full_name"] == $repository_full_name);
+				  });
+				  break;
+			  }
 		  }
 	  }
-	  catch (Exception $e) {
-		  drupal_set_message($e->getMessage());
-	  }
+	  //		print_r("after:\n".count($repositories));
 	  // Return the list of results.
+	  $entities = $this->parseEventResponse($repositories);
+	  //`		print_r("entity\n".count($entities));
 	  return $entities;
+
   }
 
   /**
@@ -249,11 +275,23 @@ class GithubRemoteSelectQuery extends RemoteEntityQuery {
 	  // Iterate through each event.
 	  foreach ($repositories as $key=>$repository) {
 		  watchdog('github', 'Repository no. %key : %name', array('%key' => $key, '%name' => $repository['full_name']), WATCHDOG_DEBUG);
-		  $readmePath = "repos/" . $repository['full_name'] . "/readme";
+
+		  $entity = $repository;
+/*
+		  foreach(github_get_remote_properties()["github_remote_repository"] as $p => $i)
+		  {
+			  if(isset($repository[$p]))
+				  $entity[$p]=$repository[$p];
+		  }
+ */
+
+
 
 		  // Make the request.
 		  try {
+			  $readmePath = "repos/" . $repository['full_name'] . "/readme";
 			  $readmeResponse = $this->connection->makeRequest($readmePath, 'GET', array('Accept' => 'application/vnd.github.v3.html'));
+			  $entity["readme"] = $this->parseReadmeResponse($readmeResponse);
 		  }
 		  catch (Exception $e) {
 			  drupal_set_message($e->getMessage());
@@ -264,55 +302,16 @@ class GithubRemoteSelectQuery extends RemoteEntityQuery {
 		  // Make the request.
 		  try {
 			  $licenseResponse = $this->connection->makeRequest($licensePath, 'GET', array('Accept' => 'application/vnd.github.drax-preview+json'));
+			  $entity["license"] = $this->parseLicenseResponse($licenseResponse);
 		  }
 		  catch (Exception $e) {
 			  drupal_set_message($e->getMessage());
 		  }
+		  $entities[]=(object)$entity;
+	  }
 
-		  $vocabulary = taxonomy_vocabulary_machine_name_load('github_topics');
-
-		  $terms = array();
-
-		  foreach ($repository['topics'] as $topic) {
-			  $term = (object) array(
-				  'name' => $topic,
-				  'description' => $topic,
-				  'vid' => $vocabulary->vid,
-			  );
-			  taxonomy_term_save($term);
-			  $terms[] = $term;
-		  }
-
-		  //dpm($terms);
-
-      $readme = "No Readme";
-      $readme = $this->parseReadmeResponse($readmeResponse);
-
-      $license = "undefined";
-      $license = $this->parseLicenseResponse($licenseResponse);
-
-      $entities[] = (object) array(
-        // Set repository information.
-        'repository_id' => isset($repository['id']) ? $repository['id'] : NULL,
-        'repository_name' => isset($repository['name']) ? $repository['name'] : NULL,
-        'repository_fullname' => isset($repository['full_name']) ? $repository['full_name'] : NULL,
-        'repository_description' => isset($repository['description']) ? $repository['description'] : NULL,
-        'repository_readme' => $readme,
-        'repository_license' => $license,
-        'repository_url' => isset($repository['html_url']) ? $repository['html_url'] : NULL,
-        'repository_topics' => isset($terms) ? $terms : NULL,
-        'repository_createddate' => isset($repository['created_at']) ? $repository['created_at'] : NULL,
-        'repository_updateddate' => isset($repository['updated_at']) ? $repository['updated_at'] : NULL,
-        'repository_pusheddate' => isset($repository['pushed_at']) ? $repository['pushed_at'] : NULL,
-        'repository_forks' => isset($repository['forks_count']) ? $repository['forks_count'] : NULL,
-        'repository_stargazers' => isset($repository['stargazers_count']) ? $repository['stargazers_count'] : NULL,
-        'repository_watchers' => isset($repository['watchers_count']) ? $repository['watchers_count'] : NULL,
-        'repository_size' => isset($repository['size']) ? $repository['size'] : NULL,
-      );
-    }
-
-    // Return the newly-created list of entities.
-    return $entities;
+	  // Return the newly-created list of entities.
+	  return $entities;
   }
 
   /**
@@ -331,19 +330,19 @@ class GithubRemoteSelectQuery extends RemoteEntityQuery {
    */
   public function parseReadmeResponse($response) {
 
-    // Fetch the list of events.
-    if ($response->code == 404) {
-      watchdog('github', 'Readme response data not received', array(), WATCHDOG_DEBUG);
-      // No data was returned so let's provide an empty list.
-      $readme = NULL;
-    }
-    else /* We have response data */ {
-      watchdog('github', 'Readme response data received', array(), WATCHDOG_DEBUG);
-      // Convert the JSON (assuming that's what we're getting) into a PHP array.
-      // Do any unmarshalling to convert the response data into a PHP array.
-      $readme = $response->data;
-    }
-    return $readme;
+	  // Fetch the list of events.
+	  if ($response->code == 404) {
+		  watchdog('github', 'Readme response data not received', array(), WATCHDOG_DEBUG);
+		  // No data was returned so let's provide an empty list.
+		  $readme = NULL;
+	  }
+	  else /* We have response data */ {
+		  watchdog('github', 'Readme response data received', array(), WATCHDOG_DEBUG);
+		  // Convert the JSON (assuming that's what we're getting) into a PHP array.
+		  // Do any unmarshalling to convert the response data into a PHP array.
+		  $readme = $response->data;
+	  }
+	  return $readme;
   }
 
   /**
@@ -362,19 +361,19 @@ class GithubRemoteSelectQuery extends RemoteEntityQuery {
    */
   public function parseLicenseResponse($response) {
 
-    // Fetch the list of events.
-    if ($response->code == 404) {
-      watchdog('github', 'License response data not received', array(), WATCHDOG_DEBUG);
-      // No data was returned so let's provide an empty list.
-      $license = "undefined";
-    }
-    else /* We have response data */ {
-      watchdog('github', 'License response data received', array(), WATCHDOG_DEBUG);
-      // Convert the JSON (assuming that's what we're getting) into a PHP array.
-      // Do any unmarshalling to convert the response data into a PHP array.
-      $license = json_decode($response->data, TRUE)['license']['name'];
-    }
-    return $license;
+	  // Fetch the list of events.
+	  if ($response->code == 404) {
+		  watchdog('github', 'License response data not received', array(), WATCHDOG_DEBUG);
+		  // No data was returned so let's provide an empty list.
+		  $license = "undefined";
+	  }
+	  else /* We have response data */ {
+		  watchdog('github', 'License response data received', array(), WATCHDOG_DEBUG);
+		  // Convert the JSON (assuming that's what we're getting) into a PHP array.
+		  // Do any unmarshalling to convert the response data into a PHP array.
+		  $license = json_decode($response->data, TRUE)['license']['name'];
+	  }
+	  return $license;
   }
 
   /**
@@ -389,16 +388,16 @@ class GithubRemoteSelectQuery extends RemoteEntityQuery {
    */
   public function throwException($code, $message) {
 
-    // Report error to the logs.
-    watchdog('github', 'ERROR: GithubProjectsRemoteSelectQuery: "@code", "@message".', array(
-      '@code' => $code,
-      '@message' => $message,
-    ));
+	  // Report error to the logs.
+	  watchdog('github', 'ERROR: GithubProjectsRemoteSelectQuery: "@code", "@message".', array(
+		  '@code' => $code,
+		  '@message' => $message,
+	  ));
 
-    // Throw an error with which callers must deal.
-    throw new Exception(t("GithubProjectsRemoteSelectQuery error, got message '@message'.", array(
-      '@message' => $message,
-    )), $code);
+	  // Throw an error with which callers must deal.
+	  throw new Exception(t("GithubProjectsRemoteSelectQuery error, got message '@message'.", array(
+		  '@message' => $message,
+	  )), $code);
   }
 
   /**
